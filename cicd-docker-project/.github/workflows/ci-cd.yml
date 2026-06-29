@@ -1,0 +1,67 @@
+name: CI/CD Pipeline
+
+# Run tests on every push/PR, but only build & push the Docker image
+# when code lands on main (so Docker Hub doesn't get spammed by PR pushes).
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  # ----------------------------------------------------------------
+  # 1) CI - install deps and run the pytest suite
+  # ----------------------------------------------------------------
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r app/requirements.txt
+          pip install -r app/requirements-dev.txt
+
+      - name: Run tests
+        run: pytest app/tests -v
+
+  # ----------------------------------------------------------------
+  # 2) CD - build the Docker image and push it to Docker Hub
+  #    (only after tests pass, and only on pushes to main)
+  # ----------------------------------------------------------------
+  build-and-push:
+    name: Build & push Docker image
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/task-manager-api:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/task-manager-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
